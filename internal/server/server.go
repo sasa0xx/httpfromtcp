@@ -1,7 +1,6 @@
 package server
 
 import (
-	"bytes"
 	"fmt"
 	"httpfromtcp/internal/request"
 	"httpfromtcp/internal/response"
@@ -17,7 +16,7 @@ const (
 	StateClosed
 )
 
-type Handler func(w io.Writer, req *request.Request) *HandlerError
+type Handler func(w *response.Writer, req *request.Request)
 
 type HandlerError struct {
 	code    response.StatusCode
@@ -88,13 +87,8 @@ func (s *Server) handle(conn net.Conn) {
 		return
 	}
 
-	buf := bytes.Buffer{}
-	handlerErr := s.handler(&buf, req)
-	if handlerErr != nil {
-		handlerErr.Write(conn)
-		return
-	}
-	response.WriteStatusLine(conn, response.StatusOK)
-	response.WriteHeaders(conn, response.GetDefaultHeaders(buf.Len()))
-	fmt.Fprintf(conn, "\r\n%s", buf.Bytes())
+	writer := response.NewWriter()
+	s.handler(writer, req)
+	p := writer.Bytes()
+	conn.Write(p)
 }
