@@ -20,6 +20,19 @@ func (h Headers) Get(name string) string {
 	return h[strings.ToLower(name)]
 }
 
+func (h Headers) Set(field_name string, field_value string) {
+	h[strings.ToLower(field_name)] = field_value
+}
+
+func (h Headers) Add(field_name string, field_value string) {
+	key := strings.ToLower(field_name)
+	if val, ok := h[key]; ok {
+		h[key] = val + ", " + field_value
+	} else {
+		h[key] = field_value
+	}
+}
+
 func (h Headers) Parse(data []byte) (int, bool, error) { // this function should parse one header at a time
 	idx := bytes.Index(data, crfl)
 	if idx == -1 {
@@ -39,11 +52,7 @@ func (h Headers) Parse(data []byte) (int, bool, error) { // this function should
 	field_name := strings.ToLower(string(parts[0]))
 	field_value := string(bytes.TrimSpace(parts[1]))
 
-	if val, ok := h[field_name]; ok {
-		h[field_name] = val + ", " + field_value
-	} else {
-		h[field_name] = field_value
-	}
+	h.Add(field_name, field_value)
 
 	return idx + len(crfl), false, nil
 }
