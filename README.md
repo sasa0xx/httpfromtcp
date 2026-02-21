@@ -1,169 +1,143 @@
 # HTTP/1.1 Server from Scratch
 
-A ground-up implementation of an HTTP/1.1 request parser built directly on top of TCP, written in Go. This project demonstrates how HTTP actually works under the hood by parsing the protocol without using Go's `net/http` package.
+Ever wonder what actually happens when you type a URL into your browser? This project is my attempt to answer that question by building an HTTP server from the ground up, using nothing but raw TCP sockets in Go.
 
-Built as part of [Boot.dev's "Build an HTTP Server" course](https://boot.dev), with additional RFC compliance improvements and bug fixes.
+No `net/http`. No frameworks. Just bytes on a wire.
 
-## Features
+Built as part of [Boot.dev's "Build an HTTP Server" course](https://boot.dev), though I've made a bunch of changes and fixes along the way.
 
-- **Streaming Request Parser** - Efficiently handles incomplete data with a state machine architecture
-- **RFC 9110/9112 Compliant** - Strictly follows HTTP/1.1 specifications
-- **Request Line Parsing** - Validates HTTP methods, paths, and protocol versions
-- **Header Parsing** - Case-insensitive header names with proper whitespace handling
-- **Body Parsing** - Content-Length based body reading
-- **Comprehensive Testing** - Edge cases covered with configurable chunk sizes
+## What This Does
 
-## What Makes This Different
+At its core, this is an HTTP/1.1 server that:
 
-Most developers use HTTP libraries without understanding the underlying protocol. This project:
-- Parses raw TCP byte streams into HTTP requests
-- Implements proper state machine for incremental parsing
-- Handles real-world edge cases (incomplete reads, malformed requests)
-- Works with actual HTTP clients like `curl`
+- Parses incoming HTTP requests from raw TCP streams
+- Generates proper HTTP responses
+- Supports chunked transfer encoding
+- Can proxy requests to other servers (with trailers!)
 
-## Technical Highlights
+The fun part is that it all happens incrementally. The parser doesn't wait for the full request to arrive - it processes data as it comes in, which is how real servers handle slow or unreliable connections.
 
-### Streaming Parser
-The parser doesn't require the entire request to be in memory. It processes data as it arrives over TCP:
-```go
-// Handles requests even when received 1-2 bytes at a time
-reader := &chunkReader{
-    data:            "GET /path HTTP/1.1\r\nHost: localhost\r\n\r\n",
-    numBytesPerRead: 2,  // Simulates slow network
-}
-```
+## How It's Built
 
-### State Machine Architecture
+### Request Parsing
+
+The request parser uses a state machine:
+
 ```
 StateInit → StateHeaders → StateBody → StateDone
 ```
 
-Each state consumes available data and transitions when ready, allowing efficient parsing of incomplete requests.
+Each state consumes whatever data is available and hands off to the next. This means we can parse requests byte-by-byte if needed, which is useful for handling those weird edge cases that show up in real network traffic.
 
-### RFC Compliance Notes
+### Response Writing
 
-During development, I found several discrepancies between the course material and the actual RFC specifications:
+Responses are built using a `Writer` that tracks its own state. You write the status line, then headers, then body - and it handles the formatting for you. It also supports:
 
-- **Header whitespace**: The course allowed leading whitespace in headers, but RFC 9112 forbids this (it's obsolete line folding from HTTP/1.0)
-- **Field name validation**: Stricter enforcement of no whitespace before colons
-- **EOF handling**: Fixed bug where final data chunk + EOF wasn't being parsed
+- Chunked responses (for streaming data)
+- Trailers (headers that come *after* the body, which is pretty cool)
 
-All reported to Boot.dev for course improvement.
+### The Proxy Example
 
-## Installation & Usage
+There's a working proxy at `/httpbin/html` that fetches content from httpbin.org and streams it back with:
 
-### Prerequisites
-- Go 1.21 or higher
+- Chunked encoding (since we don't know the content length upfront)
+- SHA256 hash and content length as trailers
 
-### Running the Server
+So the client gets the headers they need *after* the body finishes streaming. Try it:
+
 ```bash
-# Clone the repository
-git clone https://github.com/yourusername/http-from-tcp
-cd http-from-tcp
-
-# Run the server
-go run ./cmd/tcplistener
+curl --raw http://localhost:42069/httpbin/html
 ```
 
-The server listens on `localhost:42069` by default.
+You'll see the chunk sizes in hex, the body, then the trailers at the end.
 
-### Testing with curl
+## Getting Started
+
+### Prerequisites
+
+Go 1.21 or higher.
+
+### Running the Server
+
 ```bash
-# Simple GET request
-curl http://localhost:42069/test
+go run ./cmd/httpserver/main.go
+```
 
-# POST request with body
-curl -X POST http://localhost:42069/api/data \
-  -H "Content-Type: application/json" \
-  -d '{"hello":"world"}'
+The server listens on port 42069.
+
+### Trying It Out
+
+```bash
+# Basic request
+curl http://localhost:42069/
+
+# See a 400 error
+curl http://localhost:42069/yourproblem
+
+# See a 500 error
+curl http://localhost:42069/myproblem
+
+# Proxy with chunked encoding and trailers
+curl --raw http://localhost:42069/httpbin/html
 ```
 
 ### Running Tests
+
 ```bash
 go test ./...
 ```
 
-Tests include edge cases like:
-- Byte-by-byte reading (simulating slow networks)
-- Malformed requests
-- Multiple headers with the same name
-- Binary body data
-- Invalid Content-Length values
+Tests cover the usual stuff plus some trickier cases like byte-by-byte reading (simulating slow networks) and malformed requests.
 
 ## Project Structure
+
 ```
 .
 ├── cmd/
-│   └── tcplistener/     # Main server executable
+│   └── httpserver/      # Main server with routes
 ├── internal/
-│   ├── request/         # Request parser with state machine
-│   └── headers/         # Header parsing logic
+│   ├── request/         # Request parsing (state machine)
+│   ├── response/        # Response writing + chunking
+│   ├── headers/         # Header parsing logic
+│   └── server/          # TCP server boilerplate
 └── README.md
 ```
 
-## How It Works
+## Things I Found Along The Way
 
-### 1. TCP Connection
-```go
-listener, err := net.Listen("tcp", ":42069")
-conn, err := listener.Accept()
-```
+Working through this, I ran into some differences between the course material and what the RFCs actually say:
 
-### 2. Streaming Parse
-```go
-req, err := request.RequestFromReader(conn)
-// Incrementally reads and parses:
-// - Request line (method, path, version)
-// - Headers (field-name: field-value pairs)
-// - Body (if Content-Length present)
-```
+- **Header whitespace**: The course allowed leading whitespace in headers, but RFC 9112 explicitly forbids this (it's leftover from HTTP/1.0 line folding)
+- **Field name validation**: No whitespace allowed before the colon in header names
+- **EOF handling**: Had a bug where the final chunk plus EOF wasn't being processed correctly
 
-### 3. Output
-```go
-fmt.Printf("Method: %s\n", req.RequestLine.Method)
-fmt.Printf("Path: %s\n", req.RequestLine.RequestTarget)
-fmt.Printf("Headers: %v\n", req.Headers)
-fmt.Printf("Body: %s\n", req.Body)
-```
+All reported back to Boot.dev, so hopefully the course is better for the next person.
+
+## What's Not Here
+
+This is still an educational project, so some things are intentionally missing:
+
+- HTTP/2 or HTTP/3 (that's a whole other adventure)
+- Concurrent connections (single-threaded for simplicity)
+- Proper routing (just a few hardcoded paths)
+- Chunked *request* bodies (only responses)
+
+If you need any of those, you're probably better off with Go's standard library or a real framework.
 
 ## What I Learned
 
-- **Protocol Design**: How text-based protocols like HTTP are structured
-- **Streaming Parsers**: Building state machines to handle incomplete data
-- **RFC Reading**: Interpreting technical specifications (RFCs 9110, 9112)
-- **Edge Cases**: Real-world networking challenges (partial reads, EOF handling)
-- **Go Interfaces**: Leveraging `io.Reader` for flexible input sources
-- **Testing**: Writing comprehensive tests with custom mock readers
-
-## Current Limitations
-
-- Only supports HTTP/1.1 (not HTTP/2 or HTTP/3)
-- No chunked transfer encoding support
-- No response generation (parser only)
-- Single-threaded (no concurrent connection handling yet)
-- Assumes `Content-Length` for body size (no other methods)
-
-These are intentional - the goal was to understand HTTP fundamentals, not build a production server.
-
-## Future Improvements
-
-- [ ] HTTP response generation
-- [ ] Request routing by path/method
-- [ ] Concurrent connection handling with goroutines
-- [ ] Chunked transfer encoding support
-- [ ] Static file serving
-- [ ] Middleware architecture
+- How text-based protocols are structured and why they look the way they do
+- State machines are actually useful (who knew)
+- Reading RFCs is painful but necessary
+- The gap between "it works in my tests" and "it works on the real internet" is bigger than I thought
+- `io.Reader` is a beautiful interface
 
 ## Acknowledgments
 
-- Built following [Boot.dev's HTTP Server course](https://boot.dev)
-- RFCs: [9110 (HTTP Semantics)](https://www.rfc-editor.org/rfc/rfc9110.html), [9112 (HTTP/1.1)](https://www.rfc-editor.org/rfc/rfc9112.html)
-- Thanks to the Go community for excellent networking primitives
+- [Boot.dev](https://boot.dev) for the course that got me started
+- RFCs [9110](https://www.rfc-editor.org/rfc/rfc9110.html) and [9112](https://www.rfc-editor.org/rfc/rfc9112.html) for the nitty-gritty details
+- The Go team for making networking actually pleasant
 
 ## License
 
-MIT License - feel free to learn from and build upon this code.
-
----
-
-**Note**: This is an educational project. For production use, always use battle-tested libraries like Go's `net/http` package.
+MIT - do whatever you want with it.

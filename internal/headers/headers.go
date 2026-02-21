@@ -33,6 +33,11 @@ func (h Headers) Add(field_name string, field_value string) {
 	}
 }
 
+func (h Headers) Delete(field_name string) {
+	key := strings.ToLower(field_name)
+	delete(h, key)
+}
+
 func (h Headers) Parse(data []byte) (int, bool, error) { // this function should parse one header at a time
 	idx := bytes.Index(data, crfl)
 	if idx == -1 {
