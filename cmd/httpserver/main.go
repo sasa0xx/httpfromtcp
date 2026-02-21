@@ -69,6 +69,22 @@ func main() {
 			headers.Set("Content-Type", "text/html")
 			w.WriteHeaders(headers)
 			w.WriteBody(respond500())
+		} else if req.RequestLine.RequestTarget == "/video" {
+			videoData, err := os.ReadFile("assets/vim.mp4")
+			if err != nil {
+				w.WriteStatusLine(response.StatusInternalServerError)
+				h := headers.NewHeaders()
+				h.Set("Content-Type", "text/html")
+				w.WriteHeaders(h)
+				w.WriteBody(respond500())
+			} else {
+				w.WriteStatusLine(response.StatusOK)
+				h := headers.NewHeaders()
+				h.Set("Content-Type", "video/mp4")
+				w.WriteHeaders(h)
+				w.WriteBody(videoData)
+			}
+
 		} else if strings.HasPrefix(req.RequestLine.RequestTarget, "/httpbin/html") {
 			res, err := http.Get("https://httpbin.org/html")
 			if err != nil {
